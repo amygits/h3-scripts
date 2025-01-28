@@ -21,54 +21,68 @@ def _obtain_access_token() -> str:
         json={"key": API_TOKEN},
     )
     response.raise_for_status()
-    return response.json().get("token") if response.status_code == 200 else None
+    return (
+        response.json().get("token")
+        if response.status_code == 200
+        else Exception("An error occurred while retrieving a token")
+    )
 
+def submit_query(query: str, variables: dict) -> dict:
+    
+    if variables is None:
+        variables = {}
+        
+    auth_header = f"Bearer {_obtain_access_token()}"
+    
+    response = requests.post(
+        url=H3_GRAPHQL_URL,
+        headers={"Authorization": auth_header},
+        json={"query": query, "variables": variables},
+    )
+    
+    result = (
+        response.json()
+        if response.status_code == 200
+        else Exception("An error occurred while making the request")
+    )
+    
+    return result
 
 # Executes query that returns the most recent 10 ops
 def pull_10_ops() -> dict:
 
-    access_token = _obtain_access_token()
-    graphql_query = """
-    query op_tabs_page(
-        $page_input: PageInput,
-        $exclude_sample_ops: Boolean
-    ) {
-        op_tabs_page(
-            page_input: $page_input,
-            exclude_sample_ops: $exclude_sample_ops
+    query = """
+        query op_tabs_page(
+            $page_input: PageInput,
+            $exclude_sample_ops: Boolean
         ) {
-            op_tabs {
-                ...OpTabFragment
+            op_tabs_page(
+                page_input: $page_input,
+                exclude_sample_ops: $exclude_sample_ops
+            ) {
+                op_tabs {
+                    ...OpTabFragment
+                }
             }
         }
-    }
 
-    fragment OpTabFragment on OpTab {
-        op_id
-    }
-    """
+        fragment OpTabFragment on OpTab {
+            op_id
+        }
+        """
 
     variables = {
         "page_input": {"page_num": 1, "page_size": 10},
         "exclude_sample_ops": True,
     }
 
-    auth_header = f"Bearer {access_token}"
-
-    response = requests.post(
-        url=H3_GRAPHQL_URL,
-        headers={"Authorization": auth_header},
-        json={"query": graphql_query, "variables": variables},
-    )
-    result = response.json() if response.status_code == 200 else None
+    result = submit_query(query, variables)
     return result
 
 
-# Iterates through list of op_ids and prints each op's weakness data to custom csv
-def print_weaknesses(op_ids: list):
+def get_op_info(op_id: str) -> dict:
 
-    access_token = _obtain_access_token()
-    auth_header = f"Bearer {access_token}"
+    variables = {"op_id": op_id}
     query = """
     query pentest($op_id: String!) {
         pentest(op_id: $op_id) {
@@ -99,72 +113,72 @@ def print_weaknesses(op_ids: list):
             context_severity
         }
     }
-    """
-    op_headers = ["op_id", "name", "client_name", "weaknesses_count"]
-    weakness_headers = [
-        " ",
+    """    
+    result = submit_query(query, variables)
+    return result
+
+
+def print_to_csv(op_details: dict):
+    filepath = "./weaknesses.csv"
+    headers = [
+        "op_id",
+        "pentest_name",
+        "client_name",
+        "weakness_count",
         "vuln_id",
         "vuln_name",
         "vuln_category",
-        "ip",
+        "affected_ip",
         "score",
         "severity",
         "base_score",
     ]
-    delimiter = "X" * len(weakness_headers)
 
-    with open("last-10-op-weaknesses.csv", "w", newline="") as csvfile:
+    if not os.path.exists(filepath):
+        with open(filepath, "w", newline="") as csvfile:
 
-        writer = csv.writer(
-            csvfile, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
-        )
-
-        for id in op_ids:
-            op_id = id.get("op_id")
-            variables = {"op_id": op_id}
-            response = requests.post(
-                url=H3_GRAPHQL_URL,
-                headers={"Authorization": auth_header},
-                json={"query": query, "variables": variables},
+            writer = csv.writer(
+                csvfile, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
             )
-            result = response.json() if response.status_code == 200 else None
-            writer.writerow(op_headers)
-            writer.writerow(
-                [
-                    result.get("data").get("pentest").get("op_id"),
-                    result.get("data").get("pentest").get("name"),
-                    result.get("data").get("pentest").get("client_name"),
-                    result.get("data").get("pentest").get("weaknesses_count"),
-                ]
-            )
-
-            weaknesses = (
-                result.get("data")
-                .get("pentest")
-                .get("weaknesses_page")
-                .get("weaknesses")
-            )
-            writer.writerow(weakness_headers)
+            writer.writerow(headers)
+    op_id = op_details.get("data").get("pentest").get("op_id")
+    pentest_name = op_details.get("data").get("pentest").get("name")
+    client_name = op_details.get("data").get("pentest").get("client_name")
+    weaknesses = op_details.get("data").get("pentest").get("weaknesses_page").get("weaknesses")
+    if len(weaknesses) == 0:
+        with open(filepath, 'a') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow([
+                op_id, 
+                pentest_name, 
+                client_name, 
+                0
+                ])
+    else:
+        with open(filepath, "a") as csvfile:
+            writer = csv.writer(csvfile)
             for weakness in weaknesses:
-                writer.writerow(
-                    [
-                        "#",
-                        weakness.get("vuln_id"),
-                        weakness.get("vuln_name"),
-                        weakness.get("vuln_category"),
-                        weakness.get("ip"),
-                        weakness.get("score"),
-                        weakness.get("severity"),
-                        weakness.get("base_score"),
-                    ]
+                writer.writerow([
+                    op_id,
+                    pentest_name,
+                    client_name,
+                    len(weaknesses),
+                    weakness.get("vuln_id"),
+                    weakness.get("vuln_name"),
+                    weakness.get("vuln_category"),
+                    weakness.get("ip"),
+                    weakness.get("score"),
+                    weakness.get("severity"),
+                    weakness.get("base_score"),
+                ]
                 )
-            writer.writerow(delimiter)
 
 
 def main():
     ops_list = pull_10_ops()
     op_ids = ops_list.get("data").get("op_tabs_page").get("op_tabs")
-    print_weaknesses(op_ids)
+    for id in op_ids:
+        print_to_csv(get_op_info(id.get("op_id")))
 
 
 if __name__ == "__main__":
