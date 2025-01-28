@@ -27,26 +27,26 @@ def _obtain_access_token() -> str:
         else Exception("An error occurred while retrieving a token")
     )
 
+
 def submit_query(query: str, variables: dict) -> dict:
-    
+
     if variables is None:
         variables = {}
-        
+
     auth_header = f"Bearer {_obtain_access_token()}"
-    
+
     response = requests.post(
         url=H3_GRAPHQL_URL,
         headers={"Authorization": auth_header},
         json={"query": query, "variables": variables},
     )
-    
-    result = (
-        response.json()
-        if response.status_code == 200
-        else Exception("An error occurred while making the request")
-    )
-    
+
+    try:
+        result = response.json()    
+    except:
+        result = Exception("An error occurred while making the request")
     return result
+
 
 # Executes query that returns the most recent 10 ops
 def pull_10_ops() -> dict:
@@ -113,7 +113,7 @@ def get_op_info(op_id: str) -> dict:
             context_severity
         }
     }
-    """    
+    """
     result = submit_query(query, variables)
     return result
 
@@ -136,41 +136,39 @@ def print_to_csv(op_details: dict):
 
     if not os.path.exists(filepath):
         with open(filepath, "w", newline="") as csvfile:
-
             writer = csv.writer(
                 csvfile, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
             )
             writer.writerow(headers)
+
     op_id = op_details.get("data").get("pentest").get("op_id")
     pentest_name = op_details.get("data").get("pentest").get("name")
     client_name = op_details.get("data").get("pentest").get("client_name")
-    weaknesses = op_details.get("data").get("pentest").get("weaknesses_page").get("weaknesses")
+    weaknesses = (
+        op_details.get("data").get("pentest").get("weaknesses_page").get("weaknesses")
+    )
     if len(weaknesses) == 0:
-        with open(filepath, 'a') as csvfile:
+        with open(filepath, "a") as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow([
-                op_id, 
-                pentest_name, 
-                client_name, 
-                0
-                ])
+            writer.writerow([op_id, pentest_name, client_name, 0])
     else:
         with open(filepath, "a") as csvfile:
             writer = csv.writer(csvfile)
             for weakness in weaknesses:
-                writer.writerow([
-                    op_id,
-                    pentest_name,
-                    client_name,
-                    len(weaknesses),
-                    weakness.get("vuln_id"),
-                    weakness.get("vuln_name"),
-                    weakness.get("vuln_category"),
-                    weakness.get("ip"),
-                    weakness.get("score"),
-                    weakness.get("severity"),
-                    weakness.get("base_score"),
-                ]
+                writer.writerow(
+                    [
+                        op_id,
+                        pentest_name,
+                        client_name,
+                        len(weaknesses),
+                        weakness.get("vuln_id"),
+                        weakness.get("vuln_name"),
+                        weakness.get("vuln_category"),
+                        weakness.get("ip"),
+                        weakness.get("score"),
+                        weakness.get("severity"),
+                        weakness.get("base_score"),
+                    ]
                 )
 
 
